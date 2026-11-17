@@ -74,9 +74,9 @@ Serialization schemes such as \texttt{+jam} encode a noun as a linear byte array
 
 \section{Introduction}
 
-A noun is an abstract binary tree, and a serialization scheme is a way of writing that tree down linearly and hopefully compactly.\footnote{An earlier companion article on noun serialization described \texttt{+jam} (\patp{ticlys-monlun} \& \patp{lagrev-nocfep}, ``Noun Serialization,'' \emph{Urbit Systems Technical Journal} volume 3 issue 1, pp.~83--101).}  The conventional scheme, \texttt{+jam} serialization, encodes a noun as a single atom:  a linear bitstream in which the tree is walked in depth-first order and shared subtrees are elided by positional back-reference---a repeated subnoun is written once and thereafter named by the bit offset at which its encoding began.  This design serves well as an archive:  a self-contained, one-shot representation to be written to a file, sent over a wire, or hashed as a unit.  It is a poor design for a store, which must answer questions that an archive need not:  it must deduplicate structure that recurs across many nouns and not merely within one; it must permit a subnoun to be fetched without materializing the whole;\footnote{But see the \texttt{+sip} lazy jam cursor proposal (\urbitpr{7385}).} it must accommodate the incremental replacement of small parts of large evolving structures without rewriting the whole; and it may need to name a subnoun by an identity that a second party can independently recompute.  Positional back-reference serves none of these needs:  an offset is meaningful only within the single stream that defines it, is invalidated by any edit that shifts it, and says nothing about the noun to which it points.
+A noun is an abstract binary tree, and a serialization scheme is a way of writing that tree down linearly and hopefully compactly.\footnote{An earlier companion article on noun serialization described \texttt{+jam} (\patp{ticlys-monlun} \& \patp{lagrev-nocfep}, ``Noun Serialization,'' \emph{Urbit Systems Technical Journal} volume 3 issue 1, pp.~83--101).}  The conventional scheme, \texttt{+jam} serialization, encodes a noun as a single atom:  a linear bitstream in which the tree is walked in depth-first order and shared subtrees are elided by positional back-reference---a repeated subnoun is written once and thereafter named by the bit offset at which its encoding began.  This design serves well as an archive:  a self-contained, one-shot representation to be written to a file, sent over a wire, or hashed as a unit.  It is a poor design for a store, which must answer questions that an archive need not:  it must deduplicate structure that recurs across many nouns and not merely within one; it must permit a subnoun to be fetched without materializing the whole;\footnote{But see the \texttt{+sip} lazy jam cursor proposal \citepr{7385}.} it must accommodate the incremental replacement of small parts of large evolving structures without rewriting the whole; and it may need to name a subnoun by an identity that a second party can independently recompute.  Positional back-reference serves none of these needs:  an offset is meaningful only within the single stream that defines it, is invalidated by any edit that shifts it, and says nothing about the noun to which it points.
 
-The natural store representation is the one the runtime already keeps in memory.  Vere and NockVM do not store the $\sim\!\!1.66 \times 10^{21}$ nouns of a running Arvo as trees;\footnote{A computation due to \patp{dozreg-toplud}.} they store a reference-counted directed acyclic graph in which each distinct subnoun is a single, shared, pointer-identified object, and structural equality is short-circuited to pointer equality.\footnote{See \patp{rovyns-ricfer} and \patp{wicdev-wisryt}, ``A Solution to Static vs. Dynamic Linking,'' \emph{Urbit Systems Technical Journal} volume 1 issue 1, pp.~75--82.}  This article asks what it means to write such an object; to wit, to serialize the sharing graph itself, rather than a tree that happens to share.
+The natural store representation is the one the runtime already keeps in memory.  Vere and NockVM do not store the $\sim\!\!1.66 \times 10^{21}$ nouns of a running Arvo as trees;\footnote{A computation due to \patp{dozreg-toplud}.} they store a reference-counted directed acyclic graph in which each distinct subnoun is a single, shared, pointer-identified object, and structural equality is short-circuited to pointer equality.\footnote{See \patp{rovnys-ricfer} and \patp{wicdev-wisryt}, ``A Solution to Static vs.\ Dynamic Linking,'' \emph{Urbit Systems Technical Journal} volume 1 issue 1, pp.~75--82.}\nocite{rovnys2024a}  This article asks what it means to write such an object; to wit, to serialize the sharing graph itself, rather than a tree that happens to share.
 
 \section{Directed Graph Encoding}
 \label{sec:dag}
@@ -84,7 +84,7 @@ The natural store representation is the one the runtime already keeps in memory.
 If references to subnouns are permitted in a serialization scheme, then it is possible to conceive of mapping a binary tree to a directed graph representation.  Each unique subtree is represented as a node in the directed graph, and edges point to child nodes.  This allows for a different efficient representation of shared subtrees (Figure~\ref{fig:binary-tree}).  (A noun and any representation of it are still acyclic, so the directed graph is a directed acyclic graph, or \textsc{dag}.)  In fact, the idea of using this for the memoization of subject--formula pairs has long been considered.
 
 \sloppy
-The strategy has surfaced twice within Urbit, at two different granularities, and the distance between them is the subject of this article.  \patp{sorreg-namtyv}'s ``grains'' proposal\footnote{Circulated as \texttt{grains.txt}, this document dates to \textasciitilde 2019.3.6.  At the time of writing, a copy was available at \url{https://gist.github.com/Fang-/60b125e6e9ee0c7eec74d066b12210ef}.} is a storage architecture rather than an encoding:  it describes a deduplicated, reference-counted deep-storage segment---the silo---holding strongly hashed nouns (``grains''), but it specifies no wire format for a grain and deduplicates only at the coarse, hinted boundaries of large objects, copying everything below them.  Because references between grains are counted and nouns are acyclic, that graph of grains is a \textsc{dag}.  \patp{borlug-walryd}'s proposal, by contrast, describes an explicit per-cell encoding:  a node for every distinct subnoun, as in Figure~\ref{fig:directed-graph}.  The two are the storage-architecture and the wire-format faces of a single idea, and they sit at opposite ends of the graining axis of Section~\ref{sec:axes}; this article treats both, and takes the names \emph{silo} and \emph{bulk} for the two configurations, respectively.
+The strategy has surfaced twice within Urbit, at two different granularities, and the distance between them is the subject of this article.  \patp{sorreg-namtyv}'s ``grains'' proposal\footnote{Circulated as \texttt{grains.txt}, this document dates to \textasciitilde 2019.3.6 \citep{Yarvin2019grains}.  Its circulated copy is unattributed; \patp{sorreg-namtyv} has confirmed his authorship to the authors (personal communication).} is a storage architecture rather than an encoding:  it describes a deduplicated, reference-counted deep-storage segment---the silo---holding strongly hashed nouns (``grains''), but it specifies no wire format for a grain and deduplicates only at the coarse, hinted boundaries of large objects, copying everything below them.  Because references between grains are counted and nouns are acyclic, that graph of grains is a \textsc{dag}.  \patp{borlug-walryd}'s proposal, by contrast, describes an explicit per-cell encoding:  a node for every distinct subnoun, as in Figure~\ref{fig:directed-graph}.  The two are the storage-architecture and the wire-format faces of a single idea, and they sit at opposite ends of the graining axis of Section~\ref{sec:axes}; this article treats both, and takes the names \emph{silo} and \emph{bulk} for the two configurations, respectively.
 
 \begin{figure}[htp]
   \centering
@@ -191,7 +191,7 @@ The strategy has surfaced twice within Urbit, at two different granularities, an
 
 \subsection{The Shared Core}
 
-Several distinct encodings which answer to the description ``directed graph'' differ in load-bearing ways but share a common \emph{Bauplan} (Section~\ref{sec:axes}).  A noun is mapped to a set of \emph{nodes}, one per distinct subnoun under structural equality.  A node is either an \emph{atom node}, carrying an atomic value, or a \emph{cell node}, carrying an ordered pair of \emph{references} to its head and tail nodes.  Exactly one node---the whole noun---is the \emph{root}.  Because a node exists once per distinct subnoun, deduplication is total:  a subnoun that occurs a thousand times becomes one node with a thousand references, in contrast to \texttt{+jam}, whose back-referencing is gated on a size heuristic and elides a repeat only when the reference is shorter than the subtree it replaces.
+Several distinct encodings which answer to the description ``directed graph'' differ in load-bearing ways but share a common \emph{Bauplan} (Section~\ref{sec:axes}).  A noun is mapped to a set of \emph{nodes}, one per distinct subnoun under structural equality.  A node is either an \emph{atom node}, carrying an atomic value, or a \emph{cell node}, carrying an ordered pair of \emph{references} to its head and tail nodes.  Exactly one node---the whole noun---is the \emph{root}.  Because a node exists once per distinct subnoun, deduplication is total:  a subnoun that occurs a thousand times becomes one node with a thousand references, in contrast to \texttt{+jam}, which back-references every repeated cell but re-emits a repeated atom inline whenever the atom is no longer than the offset that would name it.
 
 Three commitments make the ground plan concrete and, together, make decoding safe:
 
@@ -283,44 +283,127 @@ As a corollary principle, no configuration can offer both globally recomputable 
 
 This is why \patp{sorreg-namtyv}, whose stated aims were local deduplication and cheap peer-to-peer sharing, explicitly declined global content-addressability and shared grains instead by \emph{pseudocapability}---a grain's hash encrypted under a per-neighbor secret, which grants recomputable identity to chosen counterparties without conceding it to the world.  It is equally why a store intended as a substrate for shared or verifiable state---the setting of content-addressed object stores and of on-chain commitments---must pay for canonical graining and cannot recover the knob.  The two configurations named in Table~\ref{tab:axes} are therefore not two points on a continuum but two corners permitted by the proposition.  Sections~\ref{sec:silo} and~\ref{sec:cas} develop each in turn.
 
-\section{Configuration A:\ The Local Silo}
+\section[Configuration A]{Configuration A:\ The Local Silo}
 \label{sec:silo}
 
-As \texttt{grains.txt} specifies no interior encoding and deduplicates only at grain boundaries, this configuration supplies the shared-core encoding of Section~\ref{sec:dag} for the grain interior.
+\subsection{Shop and Silo}
 
-TODO --- shop/silo segmentation, the grain bit, reference counting (grain-to-grain counted, shop-to-silo uncounted), hint-driven graining, a cheap strong hash, deep memoization as a map beside the dedup set, and pseudocapability export.
+A grain is a \emph{registered} noun:  it is strongly hashed, deduplicated, and copied into a separate deep-storage segment, the \emph{silo}.  Working nouns live in the other segment, the \emph{shop}.  The two segments are disjoint regions of equal size (the proposal's example is a gigabyte each on a 32-bit machine), so the address of an indirect noun must say which segment holds it and every reference carries a ``grain bit'' at no cost in space.  Because grains are deduplicated, two grains are equal exactly when they are the same grain, and comparing them is comparing pointers.  A subnoun that is not a grain is a \emph{granule} and lives in the shop, or inside an enclosing grain as ordinary tree structure.  The distinction is semantically invisible:  nothing in Nock or Hoon can observe whether a noun is a grain, so graining is a decision of the runtime and of hints, never of a program's meaning.
+
+In terms of Section~\ref{sec:dag}, a grain is a node and a granule is structure inside a node.  The silo's node set is the set of registered nouns, while its edges are references from the interior of one grain to another grain.  To serialize a grain is therefore to write its interior as a tree and each reference to another grain as a node reference.  \texttt{grains.txt} does not specify the interior codec.  The shared core of Section~\ref{sec:dag} can supply it with granules inlined, as can \texttt{+jam} with one additional tag for a reference to another grain, which format is the one adopted by the currently shipping implementation (Section~\ref{sec:silo-impl}).
+
+\subsection{Making Grains}
+
+Grains are hinted (opcode 11); any code may hint any noun as a grain, and the proposal expects Hoon to hint each instance of a mark and furthermore expects core batteries to be grained.  The root noun after every event is registered as well, so that the silo has no stray roots.\footnote{The sentence in \texttt{grains.txt} that states this breaks off:  ``the silo has no stray roots and can be heuristically [\ldots{}]''.}  Graining is selective:  ``We cannot treat every noun as a grain, for efficiency reasons.  But registering only nouns that correspond to natural boundaries of large-scale objects is extremely useful.''  The economics are thus those of Section~\ref{sec:axes}.  A \texttt{\%blob} hint has been proposed to mark such grains (Section~\ref{sec:silo-impl}).
+
+\subsection{Identity and Reclamation}
+
+Each grain caches a strong hash which serves as local identity, deciding whether a newly registered noun is already present.  The grain's interior is fixed by whichever hints happened to run, so per the observation of Section~\ref{sec:axes} no party lacking that history can recompute it---but nothing outside the pier is intended to do so.  The proposal notes a dividend:  a Merkle hash taken over well-grained data can use each grain's cached hash rather than rehash the grain, so that strong hashing of such data is cheap given a grain-aware jet.  %The thirty-one-bit \lstinline[style=inlinecode]{++mug} remains for everything else.
+
+Local identity does not in fact require a strong hash.  A deduplicating table needs an index and an exact equality test, and a strong hash is needed only when a grain's name leaves the pier, as a pseudocapability (described below).  The shipping implementation takes exactly this route, using the 31-bit \lstinline[style=inlinecode]{+mug} hash to index and byte comparison to test.
+
+References from one grain to another are counted; references from the shop into the silo are not.  Counting is complete because nouns are acyclic:  the silo needs no cycle collector, which is the backward-only reference rule of Section~\ref{sec:dag} paying off in storage.  Uncounted shop references are safe only if a grain whose count reaches zero is not freed while the shop may still point at it.  The registration of each event's root provides such a guarantee:  at the event boundary everything live is reachable from a registered root, and the shop's references can be discarded.
+% NOTE (authors):  grains.txt does not say when a zero-count grain is freed; the event-boundary reading above is our inference.
+
+\subsection{Deep Memoization}
+
+Once the silo exists, a deep computation cache in the same silo is, in the proposal's words, ``a no-brainer.  One is a set, the other a map.''  Besides the silo (the set of grains) sits a map from a grained \texttt{[subject formula]} pair to its grained product.  Because the units of computation are themselves grains, keys compare by pointer, and the sharing of data and code between computations and results, ``long the bugaboo of deep memoization designs,'' comes for free.  The proposal suggests \lstinline[style=inlinecode]{~+} siglus as the interface, perhaps memoizing deeply by default, and expects the Ford build cache to ``fall out of Arvo and into the silo.''  (Recall that Section~\ref{sec:dag} mentioned the memoization of subject--formula pairs, with the silo as its store.)
+
+\subsection{Pseudocapabilities and Sharing}
+
+A \emph{pseudocapability} is an exported reference to a grain:  the grain's hash, encrypted under a secret shared with one neighbor.  Anyone who presents a correct (and unforgeable) pseudocapability receives the data.  A single secret for every neighbor would make it a true capability, ``but true capabilities are terrible.  We want to control who we deliver data to.''  Global content addressability is declined explicitly, ``for now.''
+
+Identity crosses the pier boundary at the point of the pseudocapability, which explains why a policy-dependent hash is safe to export:  the counterparty never has to recompute the name, only present it back.  Grains travel by pseudocapability wherever possible, and granules are always copied out in full.  For each neighbor the sender keeps a stack of Bloom filters, each four times larger than the last, and marks every grain it sends.  A later message containing a grain that the filter reports as sent carries a reference instead.  A false positive costs an unnecessary round trip, and a lost filter costs only a retransmission.  Because Arvo cannot see grains, such grain-aware transmission cannot be built in Arvo.  The proposal accordingly moves message encoding and encryption into Vere, leaving Ames with the communication state.
 
 \subsection{Implementations}
+\label{sec:silo-impl}
 
-A working instance of the local store exists:  \patp{mastyr-bottec}'s ``blob storage for large atoms'' for Vere.\footnote{\patp{mastyr-bottec}, ``blob storage for large atoms,'' \texttt{urbit/vere} \#985, in review at the time of writing.}  Large atom storage occupies the coarsest corner of the graining axis:  it grains \emph{only atoms}, and only those above a size threshold, never cells.  An oversized leaf is written to a content-addressed file and referenced on the loom by a small handle---a ``bob atom''---whose bytes are materialized on-demand and zero-copy by \texttt{mmap}, streamed to and from disk in fixed chunks without ever occupying the loom in full.  Two of its design choices bear on the argument of this article.
+\patp{mastyr-bottec}'s ``blob storage for large atoms'' for Vere is in fact a working instance of the local store.\footnote{\href{https://github.com/urbit/vere/pull/985}{\texttt{urbit/vere} \#985}, in review at the time of writing.}  Large atom storage occupies the coarsest corner of the graining axis:  it grains only atoms above a size threshold, never cells.  An oversized leaf is written to a content-addressed file and referenced on the loom by a small handle---a ``bob atom''---whose bytes are materialized on-demand and zero-copy by \texttt{mmap}, streamed to and from disk in fixed chunks without ever occupying the loom in full.  Two of its design choices bear on the argument of this article.
 
-First, it is emphatically \emph{local}.  Node identity is \texttt{mug} used as a bucket index, with byte-for-byte comparison for exact identity and a pier-local sequence number to break \texttt{mug} collisions---not a strong content hash.  This is the pragmatic resolution of the objection that \texttt{mug}'s thirty-one bits are too few to serve as identity:  here it is index not identity.  Reclamation is a single reference count backed by durable, leased entries reconciled across the king/serf boundary---the silo's reference counting, hardened with the distributed-systems machinery \texttt{grains.txt} left implicit.  The store is thus a faithful Configuration~A,\footnote{Read ``A'' as ``alpha'' and ``B'' as ``beta'', typographically indistinguishable from their Latin alphabet congeners.} and by the observation of Section~\ref{sec:axes} it is the wrong primitive for a globally content-addressed store:  a system needing recomputable global identity, such as on-chain state or verifiable snapshots, cannot reuse it and must pay for Configuration~B.
+First, it is emphatically \emph{local}.  Node identity uses \texttt{+mug} used as a bucket index, with exact comparison and a pier-local sequence number, rather than a strong content hash, to break \texttt{+mug} collisions.  This pragmatically resolves any objection that \texttt{+mug}'s thirty-one bits are too few to serve as identity:  here it indexes rather than identifies.  Reclamation is a single reference count backed by durable, leased entries reconciled across the king/serf boundary---the silo's reference counting, hardened with the distributed-systems machinery \texttt{grains.txt} left implicit.  The store is thus a faithful Configuration~A,\footnote{Read ``A'' as ``alpha'' and ``B'' as ``beta'', typographically indistinguishable from their Latin congeners.} and by the observation of Section~\ref{sec:axes} it is also the wrong primitive for a globally content-addressed store:  a system needing recomputable global identity, such as on-chain state or verifiable snapshots, cannot reuse it and must pay for Configuration~B.
 
-Second, its serialization is instructive.  The wire format \texttt{ram} extends \texttt{+jam} with a single additional tag for an out-of-band reference to the blob store, leaving \texttt{+jam}'s structural encoding otherwise intact:  structure is jammed, and only oversized leaves are externalized and named.  This is the reconciliation of Section~\ref{sec:cas}---identity total, physical index selective---arrived at independently and in production:  pack the structure, externalize and content-address the large pieces, materialize lazily.  That the first real noun store grains only atoms and not cells is itself the strongest available evidence for the argument of Section~\ref{sec:cas}:  the deduplication left on the table at the cell level is the sublinear factor \texttt{+jam} already captures, whereas a multi-gigabyte leaf lifted off the loom is a categorical win.  An engineer optimizing for production reached for exactly the corner the analysis recommends.  Its planned \texttt{\%blob} hint---a Nock~11 annotation marking scopes whose products are expected to be large---is \texttt{grains.txt}'s hint-driven graining given a concrete syntax.
+Second, its serialization is instructive.  The wire format \texttt{ram} extends \texttt{+jam} with a single additional tag for an out-of-band reference to the blob store, leaving \texttt{+jam}'s structural encoding otherwise intact:  structure is jammed, and only oversized leaves are externalized and named.  This reconciles Section~\ref{sec:cas}'s concerns---identity total, physical index selective---in production:  pack the structure, externalize and content-address the large pieces, materialize lazily.  That the first real noun store grains only atoms and not cells is itself the strongest available evidence for the argument of Section~\ref{sec:cas}:  the deduplication left on the table at the cell level is the sublinear factor already captured by \texttt{+jam}, whereas a multi-gigabyte leaf lifted off the loom is a categorical win for memory with an event log.  Its planned \texttt{\%blob} hint---a Nock~11 annotation marking scopes whose products are expected to be large---gives \texttt{grains.txt}'s hint-driven graining a concrete syntax.
 
-\section{Configuration B:\ The Canonical Content-Addressed Store}
+\section[Configuration B]{Configuration B:\ The Canonical Content-Addressed Store}
 \label{sec:cas}
 
-TODO --- canonical graining (grain every distinct cell, coinciding with the hash-consed Merkle \textsc{dag}), the injective domain-separated noun hash, plain content addresses, garbage collection, and the relationship to Git object stores, \textsc{ipfs}, and the \textsc{zk}\textsc{vm} noun commitment.
+\subsection{Canonical Graining}
+
+Configuration~B occupies the other corner.  A node's identity must be recomputable by anyone from the noun alone, so the node set must be the noun's own.
+
+Every distinct subnoun is a node, exactly as in the shared core of Section~\ref{sec:dag}.  This node set is the noun's minimal \textsc{dag}, which is unique:  two nouns have the same minimal \textsc{dag} if and only if they are equal.  A hash-consing runtime holds such in memory when sharing is maximal, and once each reference is a hash it is a Merkle \textsc{dag}.  (The node set is canonical but an emission order is not, since a \textsc{dag} admits many topological orders.)  Where a canonical byte string is needed, as for hashing or signing a whole serialization, the order must be fixed as well; the depth-first, head-first post-order produced by the encoder of the appendices is one such choice.
+
+\subsection{An Injective Noun Hash}
+
+Let $h$ be a collision-resistant hash producing $k$-bit digests, and let $\|$ denote concatenation of bit strings.  Define
+\begin{align*}
+H(a)       &= h\big(\texttt{0} \,\|\, \texttt{mat}(a)\big) && \text{for an atom } a, \\
+H([p~q])   &= h\big(\texttt{1} \,\|\, H(p) \,\|\, H(q)\big) && \text{for a cell } [p~q].
+\end{align*}
+The leading bit separates the two domains, and the leaf codec is again \texttt{+mat}, which is self-delimiting.
+
+\paragraph*{Proposition.}
+\textit{Any two distinct nouns with equal $H$ yield a collision in $h$.}
+
+\paragraph*{Proof.}
+By induction on the structure of the nouns.  Let $x \ne y$ with $H(x) = H(y)$.  If the preimages passed to $h$ differ, they are a collision in $h$.  Otherwise they are equal, and so begin with the same domain bit.  If both are atoms, then $\texttt{mat}(x) = \texttt{mat}(y)$; but \texttt{+mat} is injective, so $x = y$, a contradiction.  If both are cells, $[x_1~x_2]$ and $[y_1~y_2]$, then since digests have fixed length, $H(x_1) = H(y_1)$ and $H(x_2) = H(y_2)$, and since $x \ne y$, at least one of the pairs is distinct.  The induction hypothesis yields a collision in $h$ from that pair. \hfill$\square$
+
+\bigskip
+\noindent
+Both halves of the construction already exist in Urbit, but not joined.  \lstinline[style=inlinecode]{+mug} has the Merkle shape:  an atom is hashed under one seed, \texttt{0xcafe.babe}, and a cell as the hash of its children's mugs under another, \texttt{0xdead.beef}.  But \texttt{+mug}'s thirty-one bits make it only suitable as an index, as noted.  \lstinline[style=inlinecode]{++sham} is a strong 128-bit hash with the domains separated by a salt (\texttt{\%mash} for an atom, \texttt{\%sham} for a cell), but it hashes the \texttt{+jam} of the whole noun.  It is therefore not Merkle:  the hash of a cell cannot be computed from the hashes of its children, and a change to one leaf rehashes everything.  $H$ has the shape of \lstinline[style=inlinecode]{+mug} and the strength of \lstinline[style=inlinecode]{+sham}.  The domain bit does the same work as the leaf and interior prefixes of Certificate Transparency's Merkle trees \citep{RFC6962} and the type-and-length header of a Git object.
+
+The price of canonical identity has a price measured in space by Section~\ref{sec:eval}:  with $k = 256$, a per-cell reference is 12 to 45 times the size of \texttt{+jam}.  The time component of its cost is one invocation of $h$ per distinct subnoun, summing to 199,083 for the compiler of the corpus.
+% TODO:  measure the hashing time per noun, alongside the throughput work of Section~\ref{sec:eval}.
+
+\subsection{Plain Content Addresses}
+
+A node's address is simply $H$ of the node (in the clear).  As a consequence, any party can verify data against its address, so a store can fetch from an untrusted peer and check what arrives by rehashing it.  Second, an address grants nothing:  unlike a pseudocapability, which is a bearer token, knowing an address is not authority to fetch it, and access control must be supplied separately.  Finally, an address leaks.  A party able to ask a store whether it holds a given address is equivalently testing whether the store holds a given noun.  This familiar confirmation problem of deduplicating stores, is what the per-neighbor secret of a pseudocapability prevents.
+
+\subsection{Reclamation}
+
+Within the store, references remain acyclic, so reference counting would be sound for them.  But the holders of a plain content address cannot be counted, because the address can be written down anywhere, including outside the store.  Configuration~B therefore reclaims by reachability:  nodes reachable from an explicit set of roots are kept while the rest are swept.\footnote{Git collects objects unreachable from its references in the same way; likewise, \textsc{ipfs} collects blocks unreachable from its pins.}
+
+\subsection{Identity Total, Index Selective}
+
+The observation of Section~\ref{sec:axes} constrains identity, not storage.  We may distinguish two node sets:  the \emph{logical} set of every distinct subnoun, over which $H$ is defined; and the \emph{physical} index, the nodes that the store records separately and can look up by address.  $H$ is a function of the noun alone whatever the physical index holds.  A store may therefore index only coarse grains, or only large atoms, write the interior of each indexed node with \texttt{+jam}, and compute the address of an unindexed interior subnoun on demand by hashing its subtree.  This recovers the granularity knob for space while keeping recomputable identity.  What it cannot avoid is the cost in time:  a computation of the root's identity still visits every distinct subnoun once.  
+%Canonical identity costs a hash per distinct cell in time; it need not cost one in space.
+\footnote{Git makes the same separation, naming every object individually while storing objects together, delta-compressed, in packfiles.  The \texttt{ram} format of Section~\ref{sec:silo-impl} has this shape.}
+
+\subsection{Related Work}
+
+\textsc{ipfs} addresses blocks by content and represents a file as a \textsc{dag} of chunks \citep{Benet2014}.  A policy dictates how a file is chunked, thus a file added under a different chunk size receives a different address:  this recapitulates the observation of Section~\ref{sec:axes}.  \textsc{ipfs} recovers agreement by fixing default parameters, that is, by making the policy canonical by convention.  Git grains at the file:  one object per file and one per directory.
+
+Nockchain commits to nouns with Tip5, a hash over the Goldilocks field \citep{nockchain}, in two ways.  \lstinline[style=inlinecode]{+hash-noun-varlen} hashes a whole noun as its leaf count, its leaf sequence, and the Dyck word of its shape.  This is canonical but tree-shaped:  its cost grows with the unshared tree, it names no subnoun, and on the compiler's \sci{2.77}{12}-node tree it would be infeasible.  The proving system's tables likewise represent each subject, formula, and product by its size, Dyck word, and leaf sequence.  \lstinline[style=inlinecode]{+hash-hashable} is a Merkle construction.  A value of type \lstinline[style=inlinecode]{$hashable} marks which parts are hashed whole, as leaves, and which as pairs of child digests.  Its graining policy is fixed by the protocol's schema for each type, so the node set is a function of the noun and a public schema, and anyone who knows the schema can recompute the identity.  This qualifies the corollary statement of Section~\ref{sec:axes}:  the granularity knob may be set once, at design time and for each type, at the price of being fixed at run time for every store.
+% NOTE (authors):  the paragraph above qualifies the Section 3 corollary; consider stating the corollary as "tunable per store at run time" to match.
 
 \section{Evaluation}
 \label{sec:eval}
 
-We measure encoded size, the point at which a concrete cost of each configurations becomes manifest; throughput and random-access latency depend on implementation and are left to future work.
+We measure encoded size, the point at which the concrete cost of each configuration consistently manifests, as throughput and random-access latency depend on implementation and are left to future work.
 % TODO:  throughput (encode/decode, and per-cell hashing for Configuration B), and subtree lookup against the +sip cursor of urbit/urbit#7385, which already reads a header atom from a jam in constant time.
-We report exact sizes.  Each encoder is simulated over a hash-consed noun rather than run, which lets the million-byte cases complete in about a second; the simulated \texttt{+jam} reproduces every jamfile of the corpus bit for bit, the simulated positional encoding agrees with the reference implementation of the appendix, and the ordinal encoding introduced below has been checked by a working encoder and decoder that round-trip at the simulated size.  The harness is in the \texttt{bench/} directory of the article's repository.
+%We report exact sizes.
+Each encoder is simulated over a hash-consed noun rather than run, which lets the million-byte cases complete in about a second; the simulated \texttt{+jam} reproduces every jamfile of the corpus bit for bit, the simulated positional encoding agrees with the reference implementation of the appendix, and the ordinal encoding introduced below has been checked by a working encoder and decoder that round-trip at the simulated size.  The harness is in the \texttt{bench/} directory of the article's repository.\footnote{See \href{https://github.com/Urbit-Systems-Technical-Journal/ustj-bulk}{\texttt{Urbit-Systems-Technical-Journal/ustj-bulk}}.}
 
-We compare five encodings.  \textbf{gel} is the unshared tree (a cell costs one bit, an atom a tag bit and its \texttt{+mat}), included to show how much sharing there is to capture.\footnote{\texttt{+gel} was described by \patp{ticlys-monlun} \& \patp{lagrev-nocfep} (2026).}  \textbf{jam} is the standard \texttt{+jam} encoding with threshold sizes before references are produced.  \textbf{positional} is the shared-core encoding of Section~\ref{sec:dag} as given in the appendices; \textbf{relative} is its variant naming each child by its distance back from the referring node; and \textbf{hash} its variant with every reference a 256-bit hash, the reference cost of Configuration~B.  \textbf{cas} is a byte-aligned content-addressed store in the manner of Configuration~B:  every distinct node once, with a one-byte tag, an atom's \texttt{+mat} padded to whole bytes, and a cell's children as two 32-byte hashes.
+We compare seven encodings:
+\begin{enumerate}
+  \item  \textbf{gel} is the unshared tree (a cell costs one bit, an atom a tag bit and its \texttt{+mat}), included to show how much sharing there is to capture.\footnote{\texttt{+gel} was described by \citet{ticlys2026noun}.}
+  \item  \textbf{jam} is the standard \texttt{+jam} encoding, which back-references every repeated cell but re-emits a repeated atom inline when the atom is no longer than its offset.
+  \item  \textbf{positional} is the shared-core encoding of Section~\ref{sec:dag} as given in the appendices.
+  \item  \textbf{relative} is its variant naming each child by its distance back from the referring node.
+  \item  \textbf{hash} is its variant with every reference a 256-bit hash, the reference cost of Configuration~B; it is reported in the text rather than in a table.
+  \item  \textbf{cas} is a byte-aligned content-addressed store in the manner of Configuration~B:  every distinct node once, with a one-byte tag, an atom's \texttt{+mat} padded to whole bytes, and a cell's children as two 32-byte hashes.
+  \item  \textbf{ordinal jam} is the variant of \texttt{+jam} described above, which names repeated cells by their ordinal rather than bit offset.  That is, a back-reference uses the count of previously emitted atoms and cells as its name rather than the bit offset in the stream.  A repeated atom is re-emitted inline under \texttt{+jam}'s rule, \lstinline[style=inlinecode]{(lte (met 0 atom) (met 0 name))}, with the ordinal as the name.  The decoder keeps a dense array of emitted nouns in place of \texttt{+cue}'s map from offset to noun.  This is the graph encoding's node identity grafted onto \texttt{+jam}'s layout:  a node is written in full at its first occurrence, as in \texttt{+jam}, and named by position in the graph, not in the stream, thereafter.
+\end{enumerate}
 
-The fifth encoding arose from the measurements themselves.  \textbf{Ordinal \texttt{+jam}} writes \texttt{+jam}'s stream unchanged except in one respect:  a back-reference names not the bit offset of its referent but its \emph{ordinal}, the count of atoms and cells emitted before it.  A repeated atom is re-emitted inline under \texttt{+jam}'s rule, \lstinline[style=inlinecode]{(lte (met 0 atom) (met 0 name))}, with the ordinal as the name.  The decoder keeps a dense array of emitted nouns in place of \texttt{+cue}'s map from offset to noun.  This is the graph encoding's node identity grafted onto \texttt{+jam}'s layout:  a node is written in full at its first occurrence, as in \texttt{+jam}, and named by position in the graph, not in the stream, thereafter.
+Not every table shows every encoding.  Table~\ref{tab:eval-toy} compares gel, jam, positional, cas, and ordinal.  Table~\ref{tab:eval-corpus} gives the unshared tree as a node count rather than an encoded size and sets the positional encoding beside relative, its variant.  Tables~\ref{tab:eval-store} and~\ref{tab:eval-versions} set jam against the positional and ordinal stores.
 
 \subsection{Synthetic nouns}
 
-Table~\ref{tab:eval-toy} evaluates the encodings against small constructed nouns.  The positional encoding beats \texttt{+jam} only on the smallest of them, the running example \lstinline[style=inlinecode]{N} and \lstinline[style=inlinecode]{[N N]}; on lists and trees of distinct atoms it is two to three times larger, and even on the heavily shared nouns of the lower block it trails \texttt{+jam}, which captures the same sharing.  The content-addressed store is larger than everything but the unshared tree.  Ordinal \texttt{+jam} is never larger than \texttt{+jam}, and smaller wherever there are back-references.
+Table~\ref{tab:eval-toy} evaluates the encodings against small constructed nouns.  The positional encoding beats \texttt{+jam} only on the smallest of them, the running example \lstinline[style=inlinecode]{N} and \lstinline[style=inlinecode]{[N N]}; on lists and trees of distinct atoms it is two to three times larger, and even on the heavily shared nouns of the lower block it trails \texttt{+jam}, which captures the same sharing.  The content-addressed store is larger than everything but the unshared tree.  Ordinal \texttt{+jam} is never larger than \texttt{+jam}, and is smaller wherever there are back-references.
 
 \begin{sidewaystable}[tp]
 \centering
-\caption{Encoded size in bytes of synthetic nouns.  \lstinline[style=inlinecode]{N} is \texttt{[[[a a a] a a] [a a a]]} with \texttt{a} the byte \texttt{0x61}.  Lists are tuples without a terminating \texttt{\textasciitilde}; ``one atom'' has a 7-bit \texttt{+mat}.  Trees are perfect; the distinct tree's leaves are 0, 1, 2, \ldots, and the shared tree and repeated squaring iterate $x \mapsto [x~x]$ from the atom \texttt{1}.  The wide share is a tuple of 64 copies of the distinct tree of depth~6.}
+\caption{Encoded size in bytes of synthetic nouns.  \lstinline[style=inlinecode]{N} is \texttt{[[a a a] a a] [a a a]} with \texttt{a} the byte \texttt{0x61}.  Lists are tuples without a terminating \texttt{\textasciitilde}; ``one atom'' has a 7-bit \texttt{+mat}.  Trees are perfect; the distinct tree's leaves are 0, 1, 2, \ldots, and the shared tree and repeated squaring iterate $x \mapsto [x~x]$ from the atom \texttt{1}.  The wide share is a tuple of 64 copies of the distinct tree of depth~6.}
 \label{tab:eval-toy}
 % \resizebox{\linewidth}{!}{%
 \begin{tabular}{ l r r r r r }
@@ -346,53 +429,55 @@ Table~\ref{tab:eval-toy} evaluates the encodings against small constructed nouns
 
 \subsection{Single nouns}
 
-For real nouns we take the fourteen cases of the \texttt{urbit/benchmark} suite,\footnote{\url{https://github.com/urbit/benchmark}, \texttt{desk/bar/*.noun}.} each a jammed \texttt{[subject formula]} pair.  Twelve are small Nock programs; two, \texttt{hoon} and \texttt{prelude}, carry the entire Hoon compiler in their subjects and compile a 437~KB and a 416~KB source file respectively.  Table~\ref{tab:eval-corpus} gives each encoding's size as a ratio to \texttt{+jam}.
+For real nouns we take fourteen cases from the \texttt{urbit/benchmark} suite,\footnote{See \texttt{desk/bar/*.noun} in \href{https://github.com/urbit/benchmark}{\texttt{urbit/benchmark}}.} each a jammed \texttt{[subject formula]} pair.  Twelve are small Nock programs; two, \texttt{hoon} and \texttt{prelude}, carry the entire Hoon compiler in their subjects and compile a 437~KB and a 416~KB source file respectively.  Table~\ref{tab:eval-corpus} gives each encoding's size as a ratio to \texttt{+jam}.
 
 \begin{sidewaystable}[tp]
 \centering
-\caption{Single nouns of the \texttt{urbit/benchmark} corpus:  \texttt{+jam} size in bytes, node counts (atoms and cells) of the unshared tree and of the \textsc{dag}, and each encoding's size as a ratio to \texttt{+jam}.}
+\caption{Single nouns of the \texttt{urbit/benchmark} corpus:  \texttt{+jam} size in bytes, node counts (atoms and cells) of the unshared tree and of the \textsc{dag}, and each encoding's size as a ratio to \texttt{+jam}.  The two positional columns share one node table and differ only in how a cell names its children:  by the child's absolute index, or by its distance back from the cell.}
 \label{tab:eval-corpus}
 % \resizebox{\linewidth}{!}{%
-\begin{tabular}{ l r r r r r r r }
+\begin{tabular}{ l r r r r r r }
   \hline \hline
-  \textbf{Case} & \textbf{jam (B)} & \textbf{tree} & \textbf{\textsc{dag}} & \textbf{positional} & \textbf{relative} & \textbf{hash} & \textbf{ordinal} \\
+  & & & & \multicolumn{2}{c}{\textbf{\makecell{positional,\\ child named by}}} & \\
+  \cmidrule(lr){5-6}
+  \textbf{Case} & \textbf{jam (B)} & \textbf{tree} & \textbf{\textsc{dag}} & \textbf{index} & \textbf{distance} & \textbf{ordinal} \\
   \hline
-  \texttt{ackermann} & 127 & 245 & 101 & 1.94 & 1.28 & 44.05 & 0.93 \\
-  \texttt{add} & 124 & 201 & 103 & 2.10 & 1.32 & 43.68 & 0.93 \\
-  \texttt{atomcat} & 643 & 1,149 & 404 & 1.91 & 1.30 & 37.17 & 0.92 \\
-  \texttt{atomdog} & 644 & 1,149 & 404 & 1.90 & 1.30 & 37.15 & 0.92 \\
-  \texttt{atomgmp} & 644 & 1,149 & 405 & 1.91 & 1.30 & 37.11 & 0.92 \\
-  \texttt{bigslot} & 146 & 227 & 111 & 1.88 & 1.30 & 40.72 & 0.94 \\
-  \texttt{dec} & 73 & 121 & 62 & 1.93 & 1.34 & 44.59 & 0.92 \\
-  \texttt{factorial} & 265 & 425 & 191 & 1.96 & 1.29 & 40.60 & 0.91 \\
-  \texttt{fibonacci} & 208 & 369 & 153 & 1.90 & 1.28 & 42.12 & 0.90 \\
-  \texttt{hoon} & 1,037,001 & \sci{2.77}{12} & 199,083 & 1.52 & 1.11 & 12.48 & 0.94 \\
-  \texttt{mmul} & 859 & 1,483 & 539 & 1.93 & 1.33 & 36.98 & 0.87 \\
-  \texttt{prelude} & 1,015,973 & \sci{2.77}{12} & 199,083 & 1.53 & 1.11 & 12.72 & 0.93 \\
-  \texttt{sha512} & 5,284 & 8,189 & 2,537 & 1.88 & 1.33 & 29.44 & 0.93 \\
-  \texttt{sieve} & 1,258 & 2,349 & 745 & 1.95 & 1.32 & 35.30 & 0.90 \\
+  \texttt{ackermann} & 127 & 245 & 101 & 1.94 & 1.28 & 0.93 \\
+  \texttt{add} & 124 & 201 & 103 & 2.10 & 1.32 & 0.93 \\
+  \texttt{atomcat} & 643 & 1,149 & 404 & 1.91 & 1.30 & 0.92 \\
+  \texttt{atomdog} & 644 & 1,149 & 404 & 1.90 & 1.30 & 0.92 \\
+  \texttt{atomgmp} & 644 & 1,149 & 405 & 1.91 & 1.30 & 0.92 \\
+  \texttt{bigslot} & 146 & 227 & 111 & 1.88 & 1.30 & 0.94 \\
+  \texttt{dec} & 73 & 121 & 62 & 1.93 & 1.34 & 0.92 \\
+  \texttt{factorial} & 265 & 425 & 191 & 1.96 & 1.29 & 0.91 \\
+  \texttt{fibonacci} & 208 & 369 & 153 & 1.90 & 1.28 & 0.90 \\
+  \texttt{hoon} & 1,037,001 & \sci{2.77}{12} & 199,083 & 1.52 & 1.11 & 0.94 \\
+  \texttt{mmul} & 859 & 1,483 & 539 & 1.93 & 1.33 & 0.87 \\
+  \texttt{prelude} & 1,015,973 & \sci{2.77}{12} & 199,083 & 1.53 & 1.11 & 0.93 \\
+  \texttt{sha512} & 5,284 & 8,189 & 2,537 & 1.88 & 1.33 & 0.93 \\
+  \texttt{sieve} & 1,258 & 2,349 & 745 & 1.95 & 1.32 & 0.90 \\
   \hline
 \end{tabular}%
 % }
 \end{sidewaystable}
 
-Three results stand out.  First, sharing in real nouns is enormous but already captured:  the compiler's \sci{2.77}{12}-node tree collapses to 199,083 distinct subnouns, yet \texttt{+jam} reaches it with 112,903 back-references, and total deduplication has little left to find.  Second, the positional encoding is larger than \texttt{+jam} on every case, by 1.5 to 2.1 times.  Once sharing is equal, size is decided by the cost of a cell, and here the positional encoding pays twice:  every child of every cell is named by a \texttt{+mat}-encoded index of about $\log_2 n$ bits, even a child with a single parent, where \texttt{+jam} writes such a child in place behind a two-bit tag.  On \texttt{hoon} a cell costs roughly 45 bits against \texttt{+jam}'s 22.  Naming children relatively recovers much of the loss, but not all.  Third, the reference inflation of Section~\ref{sec:related} is realized in full:  with 256-bit references the encoding is 12 to 44 times the size of \texttt{+jam}, the price of global identity at per-cell grain.
+Three results stand out.  First, sharing in real nouns is enormous but already captured:  the compiler's \sci{2.77}{12}-node tree collapses to 199,083 distinct subnouns, yet \texttt{+jam} reaches it with 112,903 back-references, and total deduplication has little left to find.  Second, the positional encoding is larger than \texttt{+jam} on every case, by 1.5 to 2.1 times.  Once sharing is equal, size is decided by the cost of a cell, and here the positional encoding pays twice:  every child of every cell is named by a \texttt{+mat}-encoded index of about $\log_2 n$ bits, even a child with a single parent, where \texttt{+jam} writes such a child in place behind a two-bit tag.  On \texttt{hoon} a cell costs roughly 45 bits against \texttt{+jam}'s 22.  Naming children relatively recovers much of the loss, but not all.  Third, the reference inflation of Section~\ref{sec:related} is realized in full.  When every reference in the same node table is a 256-bit hash, the encoding is 12.5 and 12.7 times the size of \texttt{+jam} on the two compiler cases and 29 to 45 times on the small programs, the price of global identity at per-cell grain.
 
-Ordinal \texttt{+jam}, by contrast, is 6 to 13 percent smaller than \texttt{+jam} on every case, and this is no accident of the corpus.
+Ordinal \texttt{+jam}, by contrast, is 6 to 13 percent smaller than \texttt{+jam} on every case, and this is no accident of this particular corpus:
 
 \paragraph*{Proposition.}
-\textit{For every noun, ordinal \texttt{+jam} is no larger than \texttt{+jam}.}
+\textit{For every noun, ordinal \textup{\texttt{+jam}} is no larger than \textup{\texttt{+jam}}.}
 
 \paragraph*{Proof.}
 The two encoders walk the noun in the same order and emit identical bits at every first occurrence; they differ only at repeats, where each chooses between a back-reference and, for an atom, re-emitting it inline.  Let a repeat refer to a node first emitted at bit offset $p$ in \texttt{+jam}'s stream and with ordinal $o$ in the ordinal stream.  Every atom or cell \texttt{+jam} emits occupies at least two bits, so $p$ is at least twice the number of atoms and cells preceding the node in \texttt{+jam}'s stream; the ordinal stream emits an atom or cell at a subset of those points, since it only ever trades an inline atom for a back-reference, so $o \le p$.  The length of \texttt{+mat} is nondecreasing in its argument, and strictly increasing in its bit length.  A cell repeat costs $2 + |\texttt{mat}(o)| \le 2 + |\texttt{mat}(p)|$.  An atom $v$ repeated is inline in both streams at equal cost, or a back-reference in both at no greater cost, or else inline in \texttt{+jam} and a back-reference in the ordinal stream; in the last case $\texttt{met}(o) < \texttt{met}(v)$, so $|\texttt{mat}(o)| \le |\texttt{mat}(v)| - 1$ and the back-reference's $2 + |\texttt{mat}(o)|$ bits do not exceed the inline $1 + |\texttt{mat}(v)|$. \hfill$\square$
 
 \bigskip
 \noindent
-The saving at each back-reference is roughly $\log_2$ of the mean number of bits per emitted node.  The cost is a cursor's:  a \texttt{+sip}-style reader can follow a \texttt{+jam} back-reference by seeking to its offset, but can follow an ordinal only through an index from ordinal to offset, built by one pass over the stream.
+The saving at each back-reference is roughly $\log_2$ of the mean number of bits per emitted node.  This costs the ability to have a lazy cursor; a \texttt{+sip}-style reader can follow a \texttt{+jam} back-reference by seeking to its offset, but can follow an ordinal only through an index from ordinal to offset, built by one pass over the stream.
 
 \subsection{Across nouns}
 
-A store's first claim over an archive is deduplication across nouns.  The \texttt{hoon} and \texttt{prelude} subjects embed the same compiler and differ in their source text:  a store already holding \texttt{hoon} gains just three nodes from \texttt{prelude}, the source atom and the two cells above it.  Table~\ref{tab:eval-store} sets the store against archives.  Two separate jams hold the compiler twice.  A single jam of the pair holds it once, but must be rewritten in full whenever a noun is added.  The ordinal store, which writes each new noun in ordinal \texttt{+jam} against the table of nodes already stored, holds the compiler once, appends \texttt{prelude} at the cost of its source text alone, and is smaller than either archive.  The positional store also appends cheaply, but carries its 1.5-fold overhead on the first noun.
+The first claim of a store over an archive is deduplication across nouns.  The \texttt{hoon} and \texttt{prelude} benchmark subjects embed the same compiler and differ in their source text:  a store already holding \texttt{hoon} gains just three nodes from \texttt{prelude}, the source atom and the two cells above it.  Table~\ref{tab:eval-store} compares the store to archives.  Two separate jams hold the compiler twice, while a single jam of the pair holds it once but must be rewritten in full whenever a noun is added.  The ordinal store, which writes each new noun in ordinal \texttt{+jam} against the table of nodes already stored, holds the compiler once, appends \texttt{prelude} at the cost of its source text alone, and is smaller than either archive.  The positional store also appends cheaply, but carries a sesquifold overhead on the first noun.
 
 \begin{table}[ht]
 \centering
@@ -414,7 +499,7 @@ A store's first claim over an archive is deduplication across nouns.  The \textt
 
 \subsection{Versioned state}
 
-The second claim is incremental update:  a store should record a new version of a large structure at the cost of the change, not of the structure.  We model versioned state as a perfect tree of $n$ leaves, each a \texttt{[key value]} pair with a random 64-bit value, and derive each version from the last by replacing one leaf, copying the path above it as a persistent structure does.  Table~\ref{tab:eval-versions} compares the bits written per version by a fresh \texttt{+jam} of the state and by an append to each store.  The ratio grows without bound with the growth being a consequence of the encoding rather than of the model.
+The second claim of store over archive is incremental updating:  a store should record a new version of a large structure at the cost of the change, not of the structure.  We model versioned state as a perfect tree of $n$ leaves, each a \texttt{[key value]} pair with a random 64-bit value, and derive each version from the last by replacing one leaf, copying the path above it as a persistent structure does.  Table~\ref{tab:eval-versions} compares the bits written per version by a fresh \texttt{+jam} of the state and by an append to each store.  The ratio grows without bound with the growth being a consequence of the encoding rather than of the model.
 
 \begin{sidewaystable}[tp]
 \centering
@@ -439,7 +524,7 @@ The second claim is incremental update:  a store should record a new version of 
 \end{sidewaystable}
 
 \paragraph*{Proposition.}
-\textit{Let $S'$ differ from a noun $S$ held in a store of $M$ nodes by the replacement of one atom, by $v$, at depth $d$, and let $S'$ have $m$ distinct atoms.  A fresh \texttt{+jam} of $S'$ costs at least $2m$ bits; appending $S'$ to the positional store costs at most $1 + |\texttt{mat}(v)| + d\,(1 + 2\,|\texttt{mat}(M + d)|)$ bits.}
+\textit{Let $S'$ differ from a noun $S$ held in a store of $M$ nodes by the replacement of one atom, by $v$, at depth $d$, and let $S'$ have $m$ distinct atoms.  A fresh \textup{\texttt{+jam}} of $S'$ costs at least $2m$ bits; appending $S'$ to the positional store costs at most $1 + |\textup{\texttt{mat}}(v)| + d\,(1 + 2\,|\textup{\texttt{mat}}(M + d)|)$ bits.}
 
 \paragraph*{Proof.}
 \texttt{+jam} emits every distinct atom inline at its first occurrence, at no fewer than two bits.  The nodes of $S'$ absent from the store are at most $v$ and the $d$ cells on the path above it; each such cell names two nodes by index, and no index exceeds $M + d$. \hfill$\square$
@@ -448,109 +533,107 @@ The second claim is incremental update:  a store should record a new version of 
 \noindent\sloppy
 For a balanced structure $d = O(\log m)$, so the ratio is $\Omega(m / (\log m \cdot \log M))$; the ordinal store obeys the same bound with a smaller constant, since a new cell on the path writes its new child in place.  One caution keeps the result honest.  An archive can share across versions too, if every version is jammed together as one noun:  for $n={}$65,536 and 51 versions that single jam takes 852.1~KiB, half the positional store's 1,694.4~KiB and the same as the ordinal store's 851.6~KiB.  What the store adds is not a smaller total but the ability to reach that total by appending, at a cost logarithmic in the structure, where the archive must be rewritten for every version.  The last columns of Table~\ref{tab:eval-versions} count that rewriting:  rejamming the history after each of 50 appends writes 42,503~KiB, slightly more than jamming each version afresh, against the ordinal store's 3.7~KiB, a factor of about 11,000.
 
-These are counts of bits written, not of work done.  To append a version, a store must first find which of its nodes are new; the simulation walks the whole version to do so, which is linear in its size, as rejamming is.  The append does logarithmic work only where unchanged subtrees can be recognized without traversal, as in a runtime whose unchanged subtrees are pointer-identical to those already stored; measuring that cost is part of the throughput evaluation left to future work.
+A caveat:  these count the bits written which isn't precisely the work done.  To append a version, a store must first find which of its nodes are new; the simulation walks the whole version to do so, which is linear in its size, as rejamming is.  The append does logarithmic work only where unchanged subtrees can be recognized without traversal, as in a runtime whose unchanged subtrees are pointer-identical to those already stored; measuring that cost would be part of a throughput evaluation left to future work.
 
 \subsection{Summary}
 
-The measurements settle what the graph form is for.  As a compression scheme for a single noun, the per-cell node table of Section~\ref{sec:dag} is not competitive:  \texttt{+jam} already captures the sharing, and naming every child costs more than writing single-parent children in place.  Node identity does pay, however, once it is combined with \texttt{+jam}'s layout:  naming a referent by its place in the graph rather than in the stream makes ordinal \texttt{+jam} provably no larger than \texttt{+jam} and 6 to 13 percent smaller in practice, and the same stream written against a persistent table is a store that deduplicates across nouns and appends a new version at logarithmic cost.  Global identity at the grain of the cell, finally, is expensive:  12 to 44 times \texttt{+jam}, which is the quantitative form of the case, made in Section~\ref{sec:axes}, for coarse grains in any configuration that does not strictly require canonical ones.
+The measurements settle the relative strenghts of the graph form.  As a compression scheme for a single noun, the per-cell node table of Section~\ref{sec:dag} is not competitive:  \texttt{+jam} already captures the sharing, while naming every child costs more than writing single-parent children in place.  Node identity pays off, however, once it is combined with \texttt{+jam}'s layout:  naming a referent by its place in the graph rather than in the stream makes ordinal \texttt{+jam} provably no larger than \texttt{+jam} and 6 to 13 percent smaller in practice, and the same stream written against a persistent table is a store that deduplicates across nouns and appends a new version at logarithmic cost.  Global identity at the grain of the cell, finally, is expensive:  12 to 45 times \texttt{+jam}, which is the quantitative form of the case, made in Section~\ref{sec:axes}, for coarse grains in any configuration that does not strictly require canonical ones.
 % TODO (authors):  decide whether ordinal +jam replaces the positional encoding as the shared core of Section 2 and the appendices.
 
 \section{Related Work}
 \label{sec:related}
 
-The encoding sits in a well-populated neighborhood, and locating it precisely clarifies both what is new here---little---and where the real costs lie.
+This family of encodings sits in a well-mapped neighborhood.
 
-\paragraph*{Lempel-Ziv.}  The graph encoding is Lempel--Ziv compression on tree structure, and its variants line up with the classical family.  \texttt{+jam} is LZ77:  a repeated subtree is replaced by a positional back-reference into the already-emitted stream, and the heuristic that gates it---emit a back-reference only when it is shorter than re-encoding the subtree---is exactly LZ's match-versus-literal decision.  The positional encoding of Section~2 is an LZ78/LZW move:  an explicit dictionary of entries, each naming earlier entries by index, emitted in dependency order, with the decoder rebuilding the dictionary as it reads.  The only structural difference is that an entry here combines two earlier entries rather than extending one by a symbol---a \textsc{dag} of phrases rather than a trie.  The canonical configuration is that same dictionary with the entry index replaced by a content hash; a reference which cost $O(\log n)$ bits as an index now costs a full hash, the price of content addressing.
+\paragraph*{Lempel-Ziv.}  The noun graph encoding is Lempel--Ziv compression on tree structure, and its variants line up with the classical family.  \texttt{+jam}, a repeated subtree is replaced by a positional back-reference into the already-emitted stream, is \textsc{lz}77, and the gating rule for a repeated atom---to re-emit the atom whenever it is no longer than the back-reference would be---follows \textsc{lz}'s match-versus-literal decision.  Section~\ref{sec:dag}'s positional encoding corresponds to \textsc{lz}78/\textsc{lzw}:  an explicit dictionary of entries, each naming earlier entries by index, emitted in dependency order with the decoder rebuilding the dictionary as it reads.  Its structural difference is that an entry combines two earlier entries rather than extending one by a symbol---a \textsc{dag} of phrases rather than a trie.  Ordinal \texttt{+jam} (Section~\ref{sec:eval}) takes one element from each, keeping \textsc{lz}77's parse (the stream is written in walk order, a first occurrence in place as a literal and a repeat as a reference) and \textsc{lz}78's addressing (a reference names a dictionary entry by number, every emitted atom or cell being implicitly the next entry, so that no dictionary record is written).  Its saving over \texttt{+jam} is the classical difference in pointer cost between the two schemes, the logarithm of the length of the stream against the logarithm of the number of phrases.  The \textsc{lzw}-style refinement of numbering only the nodes that will be referenced again, at a cost of one flag bit per node, did not pay off for the measured corpus, coming to 0.92--0.98 of \texttt{+jam}, against 0.87--0.94 for plain ordinal \texttt{+jam}.  The canonical configuration is that same dictionary with the entry index replaced by a content hash; a reference which cost $O(\log n)$ bits as an index now costs a full hash, the price of content addressing.
 
 \sloppy
-\paragraph*{Hash-consing and maximal sharing.}  Interning unique subterms so that structural equality collapses to pointer equality is hash-consing, dating to Ershov (1958)\footnote{A.~P. Ershov, ``On programming of arithmetic operations,'' \emph{Communications of the \textsc{acm}} 1:8 (1958), 3--6.} and Goto (1974),\footnote{E.~Goto, ``Monocopy and associative algorithms in an extended Lisp,'' Technical Report 74-03, University of Tokyo, 1974.} with a modern type-safe treatment by Filliâtre and Conchon.\footnote{J.-C. Filliâtre \& S. Conchon, ``Type-safe modular hash-consing,'' in \emph{Proceedings of the 2006 Workshop on \textsc{ml}}, 12--19.}  The closest \emph{implemented} relative of the present encoding is the \textsc{aterm} library,\footnote{M. van den Brand, H. de Jong, P. Klint \& P. Olivier, ``Efficient annotated terms,'' \emph{Software:  Practice and Experience} 30:3 (2000), 259--291.} whose maximally shared---that is, hash-consed---terms are serialized by the Binary \textsc{aterm} Format, a shared-\textsc{dag} exchange format reported to need under two bits per node on typical parse-tree data.  Configuration~A is close to \textsc{aterm} with a strong hash; the structure is twenty-five years old, and we claim novelty only in the noun-typed hash construction and the analysis of its configurations, not in the idea of serializing a shared \textsc{dag}.
+\paragraph*{Hash-consing and maximal sharing.}  Hash-consing, dating to \citet{Ershov1958} and \citet{Goto1974}, encompasses interning unique subterms so that structural equality collapses to pointer equality, with a modern type-safe treatment by \citet{Filliatre2006}.  The closest implemented relative of the present encoding is the \textsc{aterm} library \citep{vandenBrand2000}, whose maximally shared (hash-consed) terms are serialized by a shared-\textsc{dag} exchange format reported to need under two bits per node on typical parse-tree data.  Maximal sharing corresponds to canonical graining, and the format names an already-written term by its index, so the positional encoding is similar to the Binary \textsc{aterm} Format applied to nouns, and Configuration~B is like \textsc{aterm} with a strong hash in place of the index.
 
-\paragraph*{The savings, and their limit.}  How much sharing buys is a settled question.  Flajolet, Sipala, and Steyaert\footnote{P.~Flajolet, P.~Sipala \& J.-M. Steyaert, ``Analytic variations on the common subexpression problem,'' in \emph{\textsc{icalp} 1990}, \textsc{lncs} 443, 220--234.} showed that the minimal \textsc{dag} of a size-$n$ tree has expected size asymptotically $C\,n/\sqrt{\log n}$, the constant depending on the tree family and model.  The storage saved thus approaches $100\%$ for large structures, but only because $\sqrt{\log n}$ grows without bound; the \emph{factor} is $\sqrt{\log n}$, roughly four to five at a million nodes.  Two cautions attach.  This is a tree-versus-\textsc{dag} result, and \texttt{+jam} already captures that sharing through back-reference:  it bounds the deduplication that \texttt{+jam} and the graph encoding hold in common, not any advantage of one over the other.  And it assumes a uniform-random tree model, from which real expressions are known to depart.\footnote{O.~Chitil, ``Common subexpressions are uncommon in lazy functional languages,'' in \emph{\textsc{ifl} 1997}, \textsc{lncs} 1467, 53--71.}  Set against the saving is the cost the canonical configuration pays for global identity:  each reference grows from an $O(\log n)$-bit index to a fixed hash, an inflation of roughly $256/\log n$ per edge.  On data whose sharing is no better than the random model predicts, that inflation swamps the saving and the store is larger than \texttt{+jam} (on real Nock, 12 to 44 times larger; Section~\ref{sec:eval}); the graph form repays its cost only when shared subtrees are large enough that one hash elides a substantial payload, or when the addressability itself, and not the size, is what is wanted.  The graph form is therefore to be understood as trading size for addressability, not as a compression scheme.
+\paragraph*{Savings and limits.}  How much sharing could buy nouns is a well-studied---and settled---question.  \citet{Flajolet1990} showed that the minimal \textsc{dag} of a size-$n$ tree has expected size asymptotically $C\,n/\sqrt{\log n}$, the constant depending on the tree family and model.  The storage saved thus approaches $100\%$ for large structures, but only because $\sqrt{\log n}$ grows without bound; the \emph{factor} is $\sqrt{\log n}$, roughly four to five at a million nodes.  Two cautions attach.  This result compares a tree to a \textsc{dag} which \texttt{+jam} already captures through back-reference, thus bounding the deduplication that \texttt{+jam} and the graph encoding hold in common rather than any advantage of one over the other.  Furthermore it assumes a uniform-random tree model from which real expressions are known to depart \citep{Chitil1998}.  Set against any savings is the cost paid by the canonical configuration for global identity:  each reference grows from an $O(\log n)$-bit index to a fixed hash, an inflation of roughly $256/\log n$ per edge.  On data whose sharing is no better than the random model predicts, that inflation swamps the saving and the store is larger than \texttt{+jam} (on real Nock, 12 to 45 times larger; Section~\ref{sec:eval}); the graph form repays its cost only when shared subtrees are large enough that one hash elides a substantial payload, or when addressability rather than size is the criterion.  The graph form is therefore a trade of size for addressability, not as a compression scheme.
 
-\paragraph*{Content addressing.}  The cryptographic lineage---naming an immutable node by the hash of its content, so that identical content bears an identical name everywhere---is that of the Merkle \textsc{dag}, the Git object store, and \textsc{ipfs}.\footnote{J.~Benet, ``\textsc{ipfs}:  content addressed, versioned, \textsc{p2p} file system,'' arXiv:1407.3561 (2014).}  These supply Configuration~B's recomputable identity, not its encoding or its savings; the canonical store is the noun-typed instance of that well-worn structure, distinguished only by hashing atoms and cells under a domain-separated construction rather than files and directories.  \tombstone
+\paragraph*{Content addressing.}  The cryptographic lineage---naming an immutable node by the hash of its content, so that identical content bears an identical name everywhere---is that of the Merkle \textsc{dag}, the Git object store, and \textsc{ipfs} \citep{Benet2014}.  These supply Configuration~B's recomputable identity, not its encoding or its savings; the canonical store is the noun-typed instance of that well-worn structure, distinguished only by hashing atoms and cells under a domain-separated construction rather than files and directories.  \tombstone
 
 \selectlanguage{USenglish}
-% \printbibliography
+\printbibliography
 
 \newpage
-\section*{Appendix:\ Python Reference}
-\addcontentsline{toc}{section}{Appendix:\ Python Reference}
+% \section*{Appendix:\ Python Reference}
+% \addcontentsline{toc}{section}{Appendix:\ Python Reference}
 
-The following is a reference implementation of the shared-core encoding in the positional-index configuration.  The \texttt{mat} and \texttt{rub} routines are those of the companion article and are reproduced for self-containment.
+% The following is a reference implementation of the shared-core encoding in the positional-index configuration.  The \texttt{mat} and \texttt{rub} routines are those of the companion article and are reproduced for self-containment.
 
-\begin{lstlisting}[style=listingcode_python]
-from dataclasses import dataclass
+% \begin{lstlisting}[style=listingcode_python]
+% from dataclasses import dataclass
 
-@dataclass(frozen=True)
-class Cell:
-    head: object
-    tail: object
+% @dataclass(frozen=True)
+% class Cell:
+%     head: object
+%     tail: object
 
-def deep(n): return isinstance(n, Cell)
+% def deep(n): return isinstance(n, Cell)
 
-def mat(bits, i):
-    if i == 0:
-        bits.append(1); return
-    a = i.bit_length(); b = a.bit_length()
-    above, below = b + 1, b - 1
-    for k in range(above): bits.append(((1 << b) >> k) & 1)
-    for k in range(below): bits.append(((a & ((1 << below) - 1)) >> k) & 1)
-    for k in range(a):     bits.append((i >> k) & 1)
+% def mat(bits, i):
+%     if i == 0:
+%         bits.append(1); return
+%     a = i.bit_length(); b = a.bit_length()
+%     above, below = b + 1, b - 1
+%     for k in range(above): bits.append(((1 << b) >> k) & 1)
+%     for k in range(below): bits.append(((a & ((1 << below) - 1)) >> k) & 1)
+%     for k in range(a):     bits.append((i >> k) & 1)
 
-def rub(bits, pos):
-    z = 0
-    while bits[pos] == 0: z += 1; pos += 1
-    pos += 1
-    if z == 0: return 0, pos
-    below = z - 1
-    low = 0
-    for k in range(below): low |= bits[pos] << k; pos += 1
-    a = (1 << below) | low
-    val = 0
-    for k in range(a): val |= bits[pos] << k; pos += 1
-    return val, pos
+% def rub(bits, pos):
+%     z = 0
+%     while bits[pos] == 0: z += 1; pos += 1
+%     pos += 1
+%     if z == 0: return 0, pos
+%     below = z - 1
+%     low = 0
+%     for k in range(below): low |= bits[pos] << k; pos += 1
+%     a = (1 << below) | low
+%     val = 0
+%     for k in range(a): val |= bits[pos] << k; pos += 1
+%     return val, pos
 
-def encode(noun):
-    order, index = [], {}
-    def visit(n):
-        if n in index: return index[n]
-        node = ('cell', visit(n.head), visit(n.tail)) if deep(n) else ('atom', n)
-        i = len(order); order.append(node); index[n] = i
-        return i
-    visit(noun)
-    bits = []
-    for node in order:
-        if node[0] == 'atom':
-            bits.append(0); mat(bits, node[1])
-        else:
-            bits.append(1); mat(bits, node[1]); mat(bits, node[2])
-    return bits
+% def encode(noun):
+%     order, index = [], {}
+%     def visit(n):
+%         if n in index: return index[n]
+%         node = ('cell', visit(n.head), visit(n.tail)) if deep(n) else ('atom', n)
+%         i = len(order); order.append(node); index[n] = i
+%         return i
+%     visit(noun)
+%     bits = []
+%     for node in order:
+%         if node[0] == 'atom':
+%             bits.append(0); mat(bits, node[1])
+%         else:
+%             bits.append(1); mat(bits, node[1]); mat(bits, node[2])
+%     return bits
 
-def decode(bits):
-    pos, table = 0, []
-    while pos < len(bits):
-        tag = bits[pos]; pos += 1
-        if tag == 0:
-            v, pos = rub(bits, pos); table.append(v)
-        else:
-            h, pos = rub(bits, pos); t, pos = rub(bits, pos)
-            if h >= len(table) or t >= len(table):
-                raise ValueError("non-topological reference")
-            table.append(Cell(table[h], table[t]))
-    return table[-1]
-\end{lstlisting}
+% def decode(bits):
+%     pos, table = 0, []
+%     while pos < len(bits):
+%         tag = bits[pos]; pos += 1
+%         if tag == 0:
+%             v, pos = rub(bits, pos); table.append(v)
+%         else:
+%             h, pos = rub(bits, pos); t, pos = rub(bits, pos)
+%             if h >= len(table) or t >= len(table):
+%                 raise ValueError("non-topological reference")
+%             table.append(Cell(table[h], table[t]))
+%     return table[-1]
+% \end{lstlisting}
 
 \newpage
 \section*{Appendix:\ Hoon Reference}
 \addcontentsline{toc}{section}{Appendix:\ Hoon Reference}
 
-The same encoding in Hoon.  It is bit-identical to the Python of the preceding appendix:  bit $n$ of the atom returned by \lstinline[style=inlinecode]{+encode} is the $n$th bit appended by the Python \lstinline[style=inlinecode]{BitWriter}.  On the worked example of Table~\ref{tab:bulk-nodes}, with \lstinline[style=inlinecode]{a} the byte \lstinline[style=inlinecode]{0x61}, both produce the nodes of that table and the same 45-bit atom,
-\begin{lstlisting}[style=listingblock]
-20.245.711.941.872
-\end{lstlisting}
-Here \lstinline[style=inlinecode]{+mat} and \lstinline[style=inlinecode]{+rub} need not be reproduced:  they are already the \texttt{/sys/hoon} arms of the companion article.
+The following is a reference implementation of the shared-core encoding in the positional-index configuration.  The \texttt{mat} and \texttt{rub} routines are from \href{https://github.com/urbit/urbit}{\texttt{urbit/urbit:sys/hoon}} and are also given in full in the companion article \citep{ticlys2026noun}.
 
-Two properties of the stream let the encoded form be a bare atom, as \lstinline[style=inlinecode]{+jam}'s is, with no separate length.  Every \lstinline[style=inlinecode]{+mat} encoding ends in a set bit, and every node ends in a \lstinline[style=inlinecode]{+mat} encoding; so the last bit of the stream is set, and \lstinline[style=inlinecode]{(met 0 dat)} recovers the bit count exactly.  The decoder's loop condition is therefore the direct counterpart of the Python \lstinline[style=inlinecode]{while pos < len(bits)}.
+This produces the nodes of the worked example of Table~\ref{tab:bulk-nodes}, with \lstinline[style=inlinecode]{a} set to the byte \lstinline[style=inlinecode]{0x61}.
+
+% Two properties of the stream let the encoded form be a bare atom, as with \lstinline[style=inlinecode]{+jam}, with no separate length.  Every \lstinline[style=inlinecode]{+mat} encoding ends in a set bit, and every node ends in a \lstinline[style=inlinecode]{+mat} encoding; so the last bit of the stream is set, and \lstinline[style=inlinecode]{(met 0 dat)} recovers the bit count exactly.  The decoder's loop condition is therefore the direct counterpart of the Python \lstinline[style=inlinecode]{while pos < len(bits)}.
 
 \begin{lstlisting}[style=listingcode_hoon]
 |%
