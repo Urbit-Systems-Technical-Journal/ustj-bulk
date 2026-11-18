@@ -33,7 +33,10 @@
 %\newfontfamily\monofont{UrbitSansMonoAx-SemiBold.otf}[Scale=MatchLowercase]   % "Ax" cut
 %\newfontfamily\monofont{UrbitSansMonoBar-SemiBold.otf}[Scale=MatchLowercase]  % "Bar" cut
 \renewcommand{\setmonofont}{\monofont}
-\renewcommand{\texttt}[1]{{\monofont #1}}
+% Math-safe: a bare font switch is a no-op inside math mode, so wrap in
+% \text there. \protected keeps \ifmmode from being tested early when
+% \texttt starts an align/array cell (before the cell enters math mode).
+\protected\def\texttt#1{\ifmmode\text{{\monofont #1}}\else{\monofont #1}\fi}
 % Define a new font family for small caps with FakeSlant
 \newfontfamily\slantedsmallcapsfont{Libertinus Serif}[
     FakeSlant = 0.1 % Adjust the slant amount as needed
@@ -122,25 +125,6 @@
     keywordstyle=\bfseries,
     moredelim=[is][\underline]{@}{@}
 }
-%  As `listingcode', but without the @...@ underline delimiter, which
-%  collides with Hoon aura syntax (@ud, @tas, ...).
-\lstdefinestyle{listingcode_hoon}{
-    language=Hoon,
-    basicstyle=\setmonofont\small,
-    numbers=left, numberstyle=\tiny, stepnumber=5, firstnumber=1, numberfirstline=false,
-    frame=tb,
-    tabsize=2,
-    columns=fixed,
-    showstringspaces=false,
-    showtabs=false,
-    showspaces=false,
-    keepspaces,
-    upquote=true,
-    breaklines=true,
-    breakatwhitespace=true,
-    commentstyle=\color{darkgray}\emph,
-    keywordstyle=\bfseries
-}
 \lstdefinestyle{listingblock}{
     language=Hoon,
     basicstyle=\setmonofont\small,
@@ -222,6 +206,10 @@
 % Rust highlighting is provided by listings-rust.sty, vendored alongside this
 % file because USTJ uses a monochrome variant of the upstream package.
 \usepackage{listings-rust}
+% Annotated code fragments (boxes, notes, arrows), mainly for Nock: nockmark,
+% https://github.com/sigilante/nockmark, vendored alongside this file.
+\usepackage{nockmark}
+\nockmarkset{code font=\monofont\footnotesize}
 \lstdefinestyle{listingcode_rust}{
     language=Rust,
     basicstyle=\setmonofont\small,
